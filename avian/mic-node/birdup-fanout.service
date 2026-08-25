@@ -11,7 +11,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/socat -u UDP4-RECVFROM:8555,reuseaddr,fork UDP4-DATAGRAM:224.0.0.100:8555,ip-multicast-loop=0
+ExecStart=/usr/bin/socat -u UDP4-RECVFROM:8555,reuseaddr,fork UDP4-DATAGRAM:224.0.0.100:8555,ip-multicast-loop=1
 Restart=always
 RestartSec=3
 

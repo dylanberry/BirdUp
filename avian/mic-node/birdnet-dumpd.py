@@ -80,6 +80,31 @@ TELEMETRY_DIR = os.environ.get(
     "NODE_TELEMETRY_DIR", os.path.expanduser("~/BirdNET-Pi/data/node-telemetry"))
 TELEMETRY_RETENTION_DAYS = int(os.environ.get("NODE_TELEMETRY_RETENTION_DAYS", "45"))
 
+# Live-audio tee: decoded s16le PCM is also sent, fire-and-forget, to the
+# local RTSP relay (rtsp-relay.py via mic-relay.sh -> mediamtx /mic) so the
+# cluster BirdNET-Go can analyze the same raw mic audio. Loopback UDP is
+# lossy under load by design: the tee must NEVER break the dump path.
+TEE_ADDR = ("127.0.0.1", 8556)
+TEE_RATE = 24000  # relay/ffmpeg pipeline is fixed at 24 kHz s16le mono
+_tee_sock = None
+_tee_rate_warned = False
+
+
+def tee_pcm(samples: list, rate: int) -> None:
+    """Best-effort tee of one decoded frame (list of int16) to the relay."""
+    global _tee_sock, _tee_rate_warned
+    if rate != TEE_RATE:
+        if not _tee_rate_warned:
+            log.warning("tee: dump rate %d != %d; skipping relay tee", rate, TEE_RATE)
+            _tee_rate_warned = True
+        return
+    try:
+        if _tee_sock is None:
+            _tee_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        _tee_sock.sendto(struct.pack("<%dh" % len(samples), *samples), TEE_ADDR)
+    except Exception:
+        pass  # relay down / loopback congestion — dumps must never notice
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [dumpd] %(levelname)s %(message)s",
@@ -329,7 +354,9 @@ def handle(conn: socket.socket, addr):
                 continue
             block, pending = pending[:whole], pending[whole:]
             for off in range(0, whole, FRAME_BYTES):
-                writer.write(decode_frame(block[off:off + FRAME_BYTES]))
+                samples = decode_frame(block[off:off + FRAME_BYTES])
+                writer.write(samples)
+                tee_pcm(samples, rate)
             got += whole
 
         writer.close()
