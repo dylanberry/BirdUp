@@ -189,6 +189,11 @@ All of the above landed same-day:
   added in front of the powerbench row; `monitoring-alerting.md` topic row
   corrected to `bird-up` (bridge deployment is ground truth).
 
-Follow-ups: tune `WeakSignal`/`DroppedFrames` thresholds after a week of
-evening RF-dip noise data; the loose `dashboards/birdup-dashboard.json`
-copy is a stale mirror (ConfigMap is the wired source of truth).
+Follow-ups: `WeakSignal`/`DroppedFrames` thresholds were tuned same-day per
+operator preference (non-actionable notifications undesired; k8s b71b006):
+`DroppedFrames` = `increase[30m] >= 2500` (~53 s audio; the 1.3k-frame
+2026-08-30 21:59 dip no longer fires), `WeakSignal` = `< -70 dBm for 1h`
+(was `< -65 for 30m`, which would have fired on every evening dip). Revisit
+after a week of data if real episodes slip through. The loose
+`dashboards/birdup-dashboard.json` copy is a stale mirror (ConfigMap is the
+wired source of truth).
