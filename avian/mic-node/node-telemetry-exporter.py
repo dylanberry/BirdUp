@@ -8,6 +8,11 @@ Exposes four collector groups on one HTTP endpoint (:9558, LAN, no auth):
                         exports the latest record state as `birdnode_*`
                         gauges/counters. Data cadence is ~5 min; Prometheus
                         scrapes at 60 s.
+                        Since tl_v=2 the records also carry dump-health
+                        fields (retry backoff, prev-attempt outcome/stats,
+                        dump cap, dumpd protocol version) which are exported
+                        when present; records from older node firmware simply
+                        omit them.
   2. backend services — `birdup_service_active{unit=...}` from unprivileged
                         `systemctl is-active`, plus dump-heartbeat marker
                         (StreamData/.last-dump) age and birds.db age.
@@ -115,6 +120,17 @@ _FIELD_METRICS = [
      "Configured dump interval (seconds)."),
     ("dropped_frames", "birdnode_dropped_frames_total", "counter",
      "Lifetime dropped frames per node boot (resets on reboot)."),
+    # tl_v=2 dump-health fields (node header; present only on newer firmware).
+    ("retry_backoff_s", "birdnode_dump_backoff_seconds", "gauge",
+     "Current retry backoff before the next dump attempt (0 = none; grows 30-900 s on consecutive-fail streaks)."),
+    ("dump_max_frames", "birdnode_buf_dump_max_frames", "gauge",
+     "User-configured dump frame cap (effective cap may be larger due to the production floor)."),
+    ("prev_attempt_ms", "birdnode_last_attempt_milliseconds", "gauge",
+     "Wall-clock duration of the node's PREVIOUS dump attempt (0 = none yet)."),
+    ("prev_bytes_sent", "birdnode_last_attempt_bytes", "gauge",
+     "Bytes the node's PREVIOUS dump attempt moved (0 = none yet)."),
+    ("dumpd_v", "birdnode_dumpd_version", "gauge",
+     "birdnet-dumpd protocol version that wrote this envelope record (absent = v1)."),
 ]
 
 # Last-record dump statistics (from the JSONL envelope written by dumpd).
@@ -239,6 +255,16 @@ class NodeTelemetry:
         out.append("# HELP birdnode_info Static identity of the most recent node boot (prev_reboot = latched cause of the previous reboot, if the node provided one).")
         out.append("# TYPE birdnode_info gauge")
         out.append("birdnode_info{%s} 1" % labels)
+        # prev_result is a string (tl_v=2), so it cannot go through the generic
+        # numeric loop below (_fmt would emit NaN). Exported as the single
+        # current result: prometheus_last_result{result="stall"} == 1 fires the
+        # streak alert; when the next record flips the value, the old label set
+        # simply stops being emitted (stale after the scrape gap, alert clears).
+        prev_result = latest.get("prev_result")
+        if isinstance(prev_result, str) and prev_result:
+            out.append("# HELP birdnode_last_result Outcome of the node's PREVIOUS dump attempt. Enum: none, ok, stall, eof, connect, hdr, ack_timeout, assoc (none = no attempt yet; assoc = association timed out, nothing sent).")
+            out.append("# TYPE birdnode_last_result gauge")
+            out.append("birdnode_last_result{result=\"%s\"} 1" % _label_escape(prev_result))
         for key, name, kind, help_ in _FIELD_METRICS + _DUMP_STAT_METRICS:
             if key not in latest:
                 continue
@@ -481,7 +507,7 @@ def _local_epoch(date_str: str, time_str: str) -> float:
 # ---------------------------------------------------------------------------
 
 class MetricsHandler(BaseHTTPRequestHandler):
-    server_version = "birdup-exporter/1.0"
+    server_version = "birdup-exporter/1.1"
 
     def do_GET(self):
         if self.path not in ("/", "/metrics"):
