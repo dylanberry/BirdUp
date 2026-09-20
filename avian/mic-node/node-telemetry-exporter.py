@@ -131,6 +131,13 @@ _FIELD_METRICS = [
      "Bytes the node's PREVIOUS dump attempt moved (0 = none yet)."),
     ("dumpd_v", "birdnode_dumpd_version", "gauge",
      "birdnet-dumpd protocol version that wrote this envelope record (absent = v1)."),
+    # tl_v=2 crawl-watchdog fields (node v1.70+; absent on older firmware).
+    ("crawl_count", "birdnode_crawl_count", "gauge",
+     "Consecutive crawl-classified dump attempts (slow-TX link detector; >=3 triggers a driver restart)."),
+    ("crawl_last_kbps", "birdnode_crawl_kbps", "gauge",
+     "Throughput of the node's previous dump attempt (KB/s)."),
+    ("crawl_thresh_kbps", "birdnode_crawl_threshold_kbps", "gauge",
+     "Configured crawl threshold (KB/s); attempts slower than this count toward radio self-heal."),
 ]
 
 # Last-record dump statistics (from the JSONL envelope written by dumpd).
