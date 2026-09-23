@@ -23,19 +23,26 @@ Dump protocol (see docs/buffered-recording-spec.md in the node repo):
     frames=N\n
     capture_start_epoch=<unix sec, 0 = unknown>\n
     dropped_frames=<lifetime counter>
-    tl_v=1
+    tl_v=2
     <telemetry k=v lines — node fw v1.58+: fw_version, uptime_s, restart_count,
     boot_reason, prev_reboot?, batt_mv, batt_pct, batt_chg, batt_vbus,
     pmu_temp_c?, batt_mode, batt_eta_full_min, batt_life_min, esp_temp_c?,
     rssi_dbm, tx_dbm, eco_mode, eco_effective, cpu_mhz, buf_pending_frames,
-    buf_used_pct, buf_dump_fails, capture_rate, dump_int_s>
+    buf_used_pct, buf_dump_fails, capture_rate, dump_int_s; v1.60+ also:
+    buf_consec_fails, retry_backoff_s, dump_max_frames, prev_result,
+    prev_attempt_ms, prev_bytes_sent>
     \n
     <N * 260 raw frame bytes>
 
 Frame layout (260 B): int16 LE predictor | uint8 step index | uint8 reserved |
 256 B = 512 nibbles (low nibble = earlier sample). Frames are independent.
 
-Replies "OK\n" after the last frame is received and flushed.
+Replies "OK\n" after the last frame is received and flushed. On FAILURE
+(timeout / EOF mid-frame / reset / abandon), the partial WAVs decoded
+so far are closed normally (salvaged) and the daemon replies "P<n>\n"
+with the exact frame count it persisted (n = got/260), so the node can
+consume that prefix and stop re-sending it on the next attempt (v1.60
+partial-progress consume).
 
 Telemetry: every dump attempt with a complete header (success OR failure)
 appends one JSON line to $NODE_TELEMETRY_DIR/node-telemetry-YYYY-MM-DD.jsonl
@@ -262,7 +269,7 @@ def write_telemetry(fields: dict, addr, ok: bool, bytes_got: int,
     try:
         rec = {"ts": time.time(), "src_ip": addr[0], "dump_ok": ok,
                "dump_bytes": bytes_got, "segments": segments,
-               "duration_s": round(duration, 2)}
+               "duration_s": round(duration, 2), "dumpd_v": 2}
         if error:
             rec["error"] = str(error)
         for k, v in fields.items():
@@ -332,6 +339,7 @@ def handle(conn: socket.socket, addr):
 
     got = 0
     segments = 0
+    writer = None
     try:
         writer = SegmentWriter(rate, capture_start)
         need = frames * FRAME_BYTES
@@ -365,6 +373,24 @@ def handle(conn: socket.socket, addr):
         log.info("dump complete: %d bytes, %d segments", got, segments)
         touch_heartbeat(got, segments)
     except Exception as exc:
+        # Salvage AND report: close the trailing partial segment so it is a
+        # valid WAV (analysis matches on filename, any length is fine), then
+        # tell the node exactly how many frames were persisted ("P<n>") so it
+        # can consume them and stop re-sending megabytes on every retry
+        # (v1.60 partial-progress consume; else the spiral re-sends the same
+        # 0.1-2.5 MB over a degraded link). Sent before the connection closes
+        # (main() finally), best-effort - a dead peer just misses the trailer.
+        frames_received = got // FRAME_BYTES
+        if writer is not None:
+            try:
+                writer.close()
+                segments = writer.segments_written
+            except Exception:
+                pass
+        try:
+            conn.sendall(b"P%d\n" % frames_received)
+        except Exception:
+            pass
         # Failed attempts carry telemetry too: a flaky link is exactly when
         # dropped_frames starts climbing, and the header already arrived.
         write_telemetry(fields, addr, ok=False, bytes_got=got, segments=segments,
