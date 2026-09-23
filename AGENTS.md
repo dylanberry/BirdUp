@@ -48,6 +48,11 @@ key, OTA upload token). Never commit tokens, passwords, or hashes beyond the
   Mirror any structural change into `Caddyfile.sample`.
 - **Illustration deploys:** rsync with `--size-only`, never `--delete`
   (already wired in `scripts/deploy-to-pi.sh`).
+- **Static-first images (load-bearing):** the frontend resolves bundled
+  illustrations straight to `/avian/assets/illustrations/<slug>.png` via
+  the `DIMS` table in `apt.js`, bypassing `cutout.php` (a per-species PHP
+  burst saturated the fpm pool). Re-run `build_masks.py` after any
+  illustration add/remove/rename so DIMS stays 1:1 with the files.
 - **Classifier models:** the settings UI `MODEL` enum only lists classifiers
   whose files ship with BirdNET-Pi (V2.4 FP16 is live, MD5-verified). Do not
   select `Perch_v2` or `BirdNET-Go_classifier_*` without downloading the model

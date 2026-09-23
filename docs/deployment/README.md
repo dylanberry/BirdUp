@@ -135,3 +135,9 @@ differ from the front-end deploy:
   restart). No status route is exposed over HTTP — the exporter reads the
   pool status over the FastCGI socket directly, so nothing leaks on the LAN
   or via the public birds.* path.
+- php-fpm pool sizing: `deploy-to-pi.sh` sets `pm.max_children = 12`
+  (start 4, spare 2–8) in `www.conf`. The stock default of 5 was saturated
+  by collage page loads (one image request per species). The frontend now
+  serves bundled illustrations statically via DIMS (< Pi 2026-09 change),
+  but the larger pool stays as headroom for API/admin bursts; ~400 MB
+  worst case, fine on the 4 GB Pi.

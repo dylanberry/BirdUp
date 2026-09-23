@@ -61,6 +61,12 @@ http:// {
 	header / Cache-Control "no-cache, no-store, must-revalidate"
 	header *.html Cache-Control "no-cache, no-store, must-revalidate"
 
+	# Bundled bird images are served statically now (apt.js resolves DIMS
+	# keys to /avian/assets/illustrations/<slug>.png directly, bypassing
+	# cutout.php). Cache them for a day like serve_png() did; re-renders
+	# bust the cache via the ?v=SKETCH_VERSION/IMG_VERSION query param.
+	header /avian/assets/* Cache-Control "public, max-age=86400"
+
 	# Admin/tools password protection. The collage and public bird cards
 	# stay open; only the menu unlock and backend admin endpoints require
 	# the password.

@@ -32,7 +32,7 @@ Run the following on the Pi to grant passwordless sudo for this deploy only:
 
 ssh ${PI_USER}@${PI_HOST}
 
-echo '${PI_USER} ALL=(root) NOPASSWD: /usr/bin/cp /tmp/Caddyfile /etc/caddy/Caddyfile, /usr/bin/systemctl reload caddy, /usr/bin/chown -R caddy\:caddy ${PI_AVIAN_DIR}/ota, /usr/bin/rm -f ${SUDOERS_FILE}' | sudo tee ${SUDOERS_FILE} && sudo chmod 440 ${SUDOERS_FILE} && sudo visudo -c
+echo '${PI_USER} ALL=(root) NOPASSWD: /usr/bin/cp /tmp/Caddyfile /etc/caddy/Caddyfile, /usr/bin/systemctl reload caddy, /usr/bin/sed -i -E * /etc/php/8.4/fpm/pool.d/www.conf, /usr/sbin/php-fpm8.4 -t, /usr/bin/systemctl reload php8.4-fpm, /usr/bin/chown -R caddy\:caddy ${PI_AVIAN_DIR}/ota, /usr/bin/rm -f ${SUDOERS_FILE}' | sudo tee ${SUDOERS_FILE} && sudo chmod 440 ${SUDOERS_FILE} && sudo visudo -c
 
 Then run this script again. The sudoers file is removed automatically at the end.
 
@@ -104,7 +104,14 @@ scp -o BatchMode=yes docs/deployment/Caddyfile \
 
 echo "Installing Caddyfile and reloading Caddy..."
 ssh -o BatchMode=yes "${PI_USER}@${PI_HOST}" \
-    "sudo cp /tmp/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy && sudo rm -f ${SUDOERS_FILE}"
+    "sudo cp /tmp/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy"
+
+echo "Tuning php-fpm www pool (collage bursts one image request per species)..."
+ssh -o BatchMode=yes "${PI_USER}@${PI_HOST}" \
+    "sudo sed -i -E 's/^pm.max_children = .*/pm.max_children = 12/; s/^pm.start_servers = .*/pm.start_servers = 4/; s/^pm.min_spare_servers = .*/pm.min_spare_servers = 2/; s/^pm.max_spare_servers = .*/pm.max_spare_servers = 8/' /etc/php/8.4/fpm/pool.d/www.conf \
+     && sudo php-fpm8.4 -t && sudo systemctl reload php8.4-fpm"
+
+ssh -o BatchMode=yes "${PI_USER}@${PI_HOST}" "sudo rm -f ${SUDOERS_FILE}"
 
 echo "Verifying..."
 public_urls=(
