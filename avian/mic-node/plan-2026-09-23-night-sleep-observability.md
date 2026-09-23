@@ -1,6 +1,6 @@
 # Plan: night-sleep observability — Bird Up! side (exporter metrics + alert tolerance)
 
-Date: 2026-09-23. Status: **planned, not implemented**. Related firmware:
+Date: 2026-09-23. Status: **implemented + deployed live** (see Implementation notes below; original plan text retained). Related firmware:
 `~/code/tsim7080g-node` v1.73 (night sleep, civil-twilight duty cycle) —
 published + field-installed 2026-09-23; the node's first dusk-handoff bracket is
 expected tonight ~19:43 EDT.
@@ -54,14 +54,22 @@ Deltas vs the contract above, recorded so the plan stays truthful:
 3. **B2's real rule name** is `BirdUpDumpStale` (not "BirdupDumpHeartbeat");
    the exemption margin is 1 h past planned wake (vs 30 min on the node-side
    rule), matching its 30 min heartbeat threshold ×2.
-4. **Exporter restart during the day** drops the persisted planned-wake until
-   the next dusk bracket (the seed reads only the newest record). Harmless:
-   during the day telemetry flows (stale rules inert) and the exemption is
-   always restored by the next bracket before the next flatline starts.
+4. **Exporter restart during the day** drops the held planned-wake until the
+   next dusk bracket re-seeds it from a fresh handoff (the seed reads only the
+   newest record). Harmless for B1/B2: during the day telemetry flows (stale
+   rules inert) and the exemption is restored before the next flatline. One
+   narrow class-1 residual: if sleep also fails to trigger *that same evening*,
+   `BirdnodeNightSleepMissed` can't fire (no bracket baseline) — accepted; a
+   day-restart followed by a same-evening sleep failure is a double fault.
 5. **`health.php`**: confirmed retired (README.md:115-116) — no op, as noted.
 6. State machine + render are host-tested: `night-observability-smoke.py`
    (28 assertions, two full night cycles incl. the PWRON mid-night edge) —
    run it from this dir before any future exporter change.
+7. **Phase C landed**: "Night sleep bracket" timeseries panel added to
+   `birdup-telemetry` via `build-dashboard.py` (id 59, mic-node row):
+   `birdnode_night_sleep` + the bracket/wake epoch gauges as step-function
+   `dateTimeAsEpoch` lines (`>0`-guarded per house convention), regenerated
+   through `gen-dashboard-configmap.sh` — never hand-edited.
 
 Deployed:
 - `node-telemetry-exporter.py` → Pi `/usr/local/bin/` (md5 `aeebe0a7…`, unit
@@ -114,9 +122,9 @@ Four new output lines, emitted from the state above (not the generic
 
 | Metric | Type | Semantics |
 |---|---|---|
-| `birdnode_night_sleep` | gauge | 1 = latest record is the dusk bracket (node sleeping/just asleep); 0 = awake. Absent until the first bracket. |
-| `birdnode_night_wake_timestamp` | gauge | **Current sleep cycle's planned wake epoch** (last-seen `night_wake_s`; see A1). The alert-reference primitive. Absent/0 before the first night. |
-| `birdnode_night_bracket_timestamp` | gauge | Epoch the dusk handoff record landed (`bracket_ts`) — the "expected dusk" baseline for class (1). |
+| `birdnode_night_sleep` | gauge | 1 = latest record is the dusk bracket (node sleeping/just asleep); 0 = awake. Emitted 0 until the first bracket. |
+| `birdnode_night_wake_timestamp_seconds` | gauge | **Current sleep cycle's planned wake epoch** (last-seen `night_wake_s`; see A1). The alert-reference primitive. 0 until the first bracket. |
+| `birdnode_night_bracket_timestamp_seconds` | gauge | Epoch the dusk handoff record landed (`bracket_ts`) — the "expected dusk" baseline for class (1). |
 | `birdnode_night_slept_seconds` | gauge | Planned sleep duration from the current cycle's `night_slept_s` (dashboard aid). |
 
 Keep the generic `_FIELD_METRICS` untouched (the three raw keys must stay out of
@@ -130,8 +138,8 @@ All in group `birdup.node`, all carrying `birdup: "true"` (existing routing).
 
 ```
 expr: time() - birdnode_telemetry_last_record_timestamp_seconds > 600
-      and (birdnode_night_wake_timestamp == 0
-           or time() > birdnode_night_wake_timestamp + 1800)
+      and (birdnode_night_wake_timestamp_seconds == 0
+           or time() > birdnode_night_wake_timestamp_seconds + 1800)
 ```
 
 - Night: `time() < wake` → exempt (flatline is expected). **No change before the
@@ -145,8 +153,8 @@ expr: time() - birdnode_telemetry_last_record_timestamp_seconds > 600
 
 ```
 expr: time() - birdup_last_dump_timestamp_seconds > 1800
-      and (birdnode_night_wake_timestamp == 0
-           or time() > birdnode_night_wake_timestamp + 3600)
+      and (birdnode_night_wake_timestamp_seconds == 0
+           or time() > birdnode_night_wake_timestamp_seconds + 3600)
 ```
 
 ### B3 — `BirdnodeNightSleepMissed` (new; spec class (1))
@@ -157,12 +165,12 @@ expr: birdnode_night_sleep == 0
       and birdnode_battery_vbus == 0
       and time() - birdnode_telemetry_last_record_timestamp_seconds < 600
       and (
-        (birdnode_night_bracket_timestamp > 0
-         and time() - (birdnode_night_bracket_timestamp + 86400) > 3600)
+        (birdnode_night_bracket_timestamp_seconds > 0
+         and time() - (birdnode_night_bracket_timestamp_seconds + 86400) > 3600)
         or
-        (birdnode_night_bracket_timestamp == 0
-         and birdnode_night_wake_timestamp > 0
-         and time() - birdnode_night_wake_timestamp > 18 * 3600)
+        (birdnode_night_bracket_timestamp_seconds == 0
+         and birdnode_night_wake_timestamp_seconds > 0
+         and time() - birdnode_night_wake_timestamp_seconds > 18 * 3600)
       )
 for: 30m   severity: warning
 ```
@@ -170,14 +178,17 @@ for: 30m   severity: warning
 Semantics: node is awake-by-choice-unblocked (ECO effective, on battery),
 telemetry still flowing, and we're >1 h past *today's expected dusk* (previous
 bracket + 24 h) with no new `night_sleep=1` → sleep didn't trigger. The 30 m
-`for:` absorbs dump-interval jitter. First-night fallback uses wake+18 h
-(≈ Toronto dusk proxy) when no prior bracket exists yet. Fires at worst ~1-2 h
-after normal bed time, only while records are actually still flowing.
+`for:` absorbs dump-interval jitter. The `bracket == 0 and wake > 0` fallback
+(wake+18 h ≈ Toronto dusk proxy) is defensive only — `bracket_ts` and
+`wake_epoch` are set by the same bracket record, so no reachable state has one
+at 0 and the other >0; retained in the deployed rule as belt-and-braces. Fires
+at worst ~1-2 h after normal bed time, only while records are actually still
+flowing.
 
 ### B4 — untouched rules
 
 `BirdnodeBatteryLow` (battery doesn't drain while deep-sleeping; unchanged),
-`BirdnodeDroppedFrames`, `BirdnodeDumpFails`, `BirdnodeWifiWeak`, backend/
+`BirdnodeDroppedFrames`, `BirdnodeDumpFails`, `BirdnodeWeakSignal`, backend/
 frontend rules (heartbeat-exempted ones covered in B2). Re-verify the `for:`
 durations after the first two real nights.
 
@@ -186,10 +197,10 @@ durations after the first two real nights.
 `infrastructure/kube-prometheus-stack/dashboards/birdup-dashboard-configmap.yaml`
 (uid `birdup-telemetry`, generated via `build-dashboard.py` + `gen-dashboard-configmap.sh`):
 add one time-series panel, "Night sleep bracket": `birdnode_night_sleep` + a
-step function of `birdnode_night_bracket_timestamp`/`birdnode_night_wake_timestamp`
+step function of `birdnode_night_bracket_timestamp_seconds`/`birdnode_night_wake_timestamp_seconds`
 so the flatline reads as a scheduled gap, not a dead node. Regenerate via the
-generator scripts — never hand-edit the configmap. (Deferable; alerts are the
-actual deliverable.)
+generator scripts — never hand-edit the configmap. **Implemented 2026-09-23**
+(see Implementation notes item 7).
 
 ## Phase D — deploy + validation
 
@@ -200,7 +211,7 @@ actual deliverable.)
    `python3 -m py_compile ...` + drive `NodeTelemetry` against a fixture JSONL
    with a handoff record (`night_sleep=1`, `night_wake_s`) followed by a wake
    record (`night_sleep=0`, no `night_wake_s`) → assert `birdnode_night_sleep=0`
-   while `birdnode_night_wake_timestamp` still holds the cycle's wake; then a new
+   while `birdnode_night_wake_timestamp_seconds` still holds the cycle's wake; then a new
    bracket record → wake timestamp replaced. Add the fixture under
    `avian/mic-node/powerbench/`-adjacent tests (see conventions there).
 3. Deploy (HANDOFF-phase4 pattern):
@@ -224,7 +235,7 @@ actual deliverable.)
 
 Expected from the firmware plan's field soak:
 - ~19:43 EDT dusk handoff → JSONL record `night_sleep=1` + `night_wake_s`;
-  exporter shows `birdnode_night_sleep=1`, `birdnode_night_wake_timestamp ≈
+  exporter shows `birdnode_night_sleep=1`, `birdnode_night_wake_timestamp_seconds ≈
   06:31 +delta`; no `BirdnodeDumpStale`/`BirdUpDumpStale` all night.
 - ~06:31 wake → first dump → record `night_sleep=0` + `night_slept_s`; exporter
   flips `night_sleep=0`, keeps `night_wake_timestamp` (this morning's) until the
@@ -247,7 +258,7 @@ comment if Phase C landed.
 
 - dumpd changes (none needed — generic header copy already stages the fields).
 - Firmware changes (node v1.73 is the contract; the exporter ignores absent
-  fields, so older node firmware stays compatible — all four metrics absent until
+  fields, so older node firmware stays compatible — all four metrics emit 0 until
   the first bracket).
 - `health.php` (retired; the exemption above is its successor surface).
 - Grafana alerting (Alertmanager-only per `~/code/k8s/docs/monitoring-alerting.md`).
