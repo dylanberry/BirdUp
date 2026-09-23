@@ -161,6 +161,19 @@ class NodeTelemetry:
         self.records_fail = 0
         self._handles = {}          # path -> open file handle
         self._seeded = False
+        # v1.73 night-sleep cycle state (plan-2026-09-23-night-sleep-observability.md):
+        # the node sleeps one whole civil night; the dusk-handoff record carries
+        # night_sleep=1 + night_wake_s and the first post-wake record carries
+        # night_sleep=0 + night_slept_s. wake_epoch must PERSIST across records
+        # that omit it (the day records don't re-send it) and be replaced only
+        # when the next night's bracket arrives — that persistence is what lets
+        # alert rules answer "are we inside the expected flatline?".
+        self.night = {
+            "sleep": 0,        # latest night_sleep (1 = dusk bracket; 0 = awake)
+            "wake_epoch": 0,   # CURRENT cycle's planned wake (epoch); 0 = none yet
+            "bracket_ts": 0.0, # Pi-arrival ts of the night_sleep=1 record (dusk handoff)
+            "slept_s": 0,      # planned sleep duration of the current cycle
+        }
 
     def _day_files(self) -> list:
         today = time.strftime("%Y-%m-%d", time.gmtime())
@@ -203,6 +216,37 @@ class NodeTelemetry:
             ts = rec.get("ts")
             if isinstance(ts, (int, float)) and ts > self.last_ts:
                 self.last_ts = ts
+            # Night-cycle state (v1.73). Values arrive as ints (dumpd _coerce),
+            # but stay defensive: older firmware / edge paths may omit them.
+            ns = rec.get("night_sleep")
+            if ns is not None and str(ns) not in ("", "None"):
+                try:
+                    ns_i = int(ns)
+                except (TypeError, ValueError):
+                    ns_i = None
+                if ns_i is not None:
+                    self.night["sleep"] = ns_i
+                    if ns_i == 1:
+                        # New sleep cycle begins: the previous cycle's planned
+                        # wake is void (the bracket's own night_wake_s, if in
+                        # the same record, is stored below).
+                        self.night["wake_epoch"] = 0
+                        self.night["slept_s"] = 0
+                        self.night["bracket_ts"] = float(ts) if isinstance(ts, (int, float)) else self.last_ts
+            nw = rec.get("night_wake_s")
+            if nw is not None and str(nw) not in ("", "None"):
+                try:
+                    wk = int(nw)
+                except (TypeError, ValueError):
+                    wk = None
+                if wk is not None:
+                    self.night["wake_epoch"] = wk
+            ns2 = rec.get("night_slept_s")
+            if ns2 is not None and str(ns2) not in ("", "None"):
+                try:
+                    self.night["slept_s"] = int(ns2)
+                except (TypeError, ValueError):
+                    pass
 
     def tail_once(self) -> None:
         if not self._seeded:
@@ -213,7 +257,25 @@ class NodeTelemetry:
                 fh = self._handles.get(path)
                 if fh is None:
                     fh = open(path, "rb")
-                    fh.seek(0, os.SEEK_END)
+                    # New day file: seed from its current tail instead of
+                    # blind-seeking to EOF. Otherwise the FIRST record of a
+                    # fresh UTC day file is never read and last_ts falls
+                    # ~10 min behind at every midnight (false
+                    # BirdnodeDumpStale alert; observed 2026-09-22 20:09 EDT).
+                    size = os.fstat(fh.fileno()).st_size
+                    if size > 0:
+                        fh.seek(max(0, size - (1 << 16)))
+                        head = fh.read()
+                        fh.seek(0, os.SEEK_END)
+                        for ln in head.split(b"\n")[:-1]:  # drop torn tail
+                            ln = ln.strip()
+                            if not ln:
+                                continue
+                            try:
+                                rec = json.loads(ln.decode("utf-8", "replace"))
+                                self._apply(rec, count=True)
+                            except (ValueError, TypeError):
+                                pass  # first fragment may be torn at mid-line
                     self._handles[path] = fh
                 if st.st_size < fh.tell():
                     # File rotated/truncated (unlikely: day files are append-only)
@@ -245,6 +307,7 @@ class NodeTelemetry:
             latest = dict(self.latest)
             last_ts = self.last_ts
             ok, fail = self.records_ok, self.records_fail
+            night = dict(self.night)
         out = []
         out.append("# HELP birdnode_dump_records_total Number of dump attempts observed since exporter start.")
         out.append("# TYPE birdnode_dump_records_total counter")
@@ -253,6 +316,22 @@ class NodeTelemetry:
         out.append("# HELP birdnode_telemetry_last_record_timestamp_seconds Unix epoch of the newest telemetry record (0 until first record).")
         out.append("# TYPE birdnode_telemetry_last_record_timestamp_seconds gauge")
         out.append("birdnode_telemetry_last_record_timestamp_seconds %.3f" % last_ts)
+        # v1.73 night-sleep bracket. Emitted ALWAYS (0 = unknown) so the alert
+        # rules' `== 0` branches keep their pre-night-sleep behavior: before
+        # the first-ever dusk bracket there is no planned wake, so staleness
+        # checks must not be exempted (and the missed-sleep rule must not fire).
+        out.append("# HELP birdnode_night_sleep 1 = the dusk-handoff bracket was seen (node entered night sleep); 0 = awake/unknown.")
+        out.append("# TYPE birdnode_night_sleep gauge")
+        out.append("birdnode_night_sleep %d" % (1 if night["sleep"] else 0))
+        out.append("# HELP birdnode_night_bracket_timestamp_seconds Pi-arrival epoch of the night_sleep=1 record (sleep entry; today's expected dusk = this + 86400). 0 = none yet.")
+        out.append("# TYPE birdnode_night_bracket_timestamp_seconds gauge")
+        out.append("birdnode_night_bracket_timestamp_seconds %.3f" % float(night["bracket_ts"]))
+        out.append("# HELP birdnode_night_wake_timestamp_seconds Planned wake epoch of the CURRENT sleep cycle (last-seen night_wake_s, persisted across records until the next dusk bracket). 0 = none yet.")
+        out.append("# TYPE birdnode_night_wake_timestamp_seconds gauge")
+        out.append("birdnode_night_wake_timestamp_seconds %d" % int(night["wake_epoch"]))
+        out.append("# HELP birdnode_night_slept_seconds Planned night-sleep duration of the current cycle (night_slept_s). 0 = none yet.")
+        out.append("# TYPE birdnode_night_slept_seconds gauge")
+        out.append("birdnode_night_slept_seconds %d" % int(night["slept_s"]))
         node = latest.get("node", "unknown")
         info = {'node': node if isinstance(node, str) else "unknown",
                 'fw_version': str(latest.get("fw_version", "unknown")),

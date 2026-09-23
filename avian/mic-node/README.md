@@ -162,7 +162,7 @@ The cluster scrapes sb-birdnet-pi4 for the full Bird Up! telemetry picture
 
 | Port | Service (unit) | Exposes |
 |---|---|---|
-| 9558/tcp | `node-telemetry-exporter.py` (`birdup-exporter`) | `birdnode_*` node telemetry (tailed JSONL), `birdup_service_active`, dump heartbeat `.last-dump`, `birdup_detections_*` (incremental birds.db counters) |
+| 9558/tcp | `node-telemetry-exporter.py` (`birdup-exporter`) | `birdnode_*` node telemetry (tailed JSONL), `birdup_service_active`, dump heartbeat `.last-dump`, `birdup_detections_*` (incremental birds.db counters). v1.73+ adds the night-sleep bracket: `birdnode_night_sleep` (0/1), `birdnode_night_wake_timestamp_seconds` (current cycle's planned wake, persisted until the next dusk bracket), `birdnode_night_bracket_timestamp_seconds`, `birdnode_night_slept_seconds` — see `plan-2026-09-23-night-sleep-observability.md`. The nightly 8-15 h sleep flatline is expected; `BirdnodeDumpStale`/`BirdUpDumpStale` are exempt until planned wake + 30/60 min, and `BirdnodeNightSleepMissed` fires when telemetry keeps flowing past expected dusk with no bracket (alert rules in the homelab repo, `prometheusrule-birdup.yaml`). |
 | 9100/tcp | `prometheus-node-exporter` (Debian pkg) | Pi host metrics (CPU/mem/disk/temp) |
 | 2020/tcp | Caddy site (`:2020` in Caddyfile) | Caddy built-in `/metrics` (proxied from the loopback admin endpoint) |
 | 9253/tcp | `php-fpm_exporter` (`birdup-phpfpm-exporter`, runs as caddy) | pool `www` status via the FastCGI unix socket (`pm.status_path=/status`) |
