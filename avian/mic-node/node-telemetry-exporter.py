@@ -170,9 +170,12 @@ class NodeTelemetry:
         # alert rules answer "are we inside the expected flatline?".
         self.night = {
             "sleep": 0,        # latest night_sleep (1 = dusk bracket; 0 = awake)
-            "wake_epoch": 0,   # CURRENT cycle's planned wake (epoch); 0 = none yet
+            "wake_epoch": 0,   # planned wake (epoch); v1.74+ = NEXT cycle, refreshed
+                               # on EVERY dump (was: current cycle, handoff-only)
             "bracket_ts": 0.0, # Pi-arrival ts of the night_sleep=1 record (dusk handoff)
             "slept_s": 0,      # planned sleep duration of the current cycle
+            "window_start": 0, # v1.74+: next sleep-entry epoch (dusk + postDusk), sent on every dump
+            "status": "",      # v1.74+: deep_sleep_status_code of the last dump (charging/eco_off/...)
         }
 
     def _day_files(self) -> list:
@@ -247,6 +250,19 @@ class NodeTelemetry:
                     self.night["slept_s"] = int(ns2)
                 except (TypeError, ValueError):
                     pass
+            # v1.74+ (2/2): the sleep SCHEDULE rides every dump — next
+            # window-start epoch and the chain verdict. Unlike wake_epoch
+            # these are pure refresh-state (each record carries its own);
+            # nothing to void on the dusk bracket.
+            nwin = rec.get("night_window_start_s")
+            if nwin is not None and str(nwin) not in ("", "None"):
+                try:
+                    self.night["window_start"] = int(nwin)
+                except (TypeError, ValueError):
+                    pass
+            nst = rec.get("night_status")
+            if nst is not None and str(nst) not in ("", "None"):
+                self.night["status"] = str(nst)
 
     def tail_once(self) -> None:
         if not self._seeded:
@@ -326,12 +342,26 @@ class NodeTelemetry:
         out.append("# HELP birdnode_night_bracket_timestamp_seconds Pi-arrival epoch of the night_sleep=1 record (sleep entry; today's expected dusk = this + 86400). 0 = none yet.")
         out.append("# TYPE birdnode_night_bracket_timestamp_seconds gauge")
         out.append("birdnode_night_bracket_timestamp_seconds %.3f" % float(night["bracket_ts"]))
-        out.append("# HELP birdnode_night_wake_timestamp_seconds Planned wake epoch of the CURRENT sleep cycle (last-seen night_wake_s, persisted across records until the next dusk bracket). 0 = none yet.")
+        out.append("# HELP birdnode_night_wake_timestamp_seconds Planned wake epoch (dawn - preDawn - drift guard). v1.74+: the NEXT cycle's wake, refreshed on every dump. Pre-1.74: the current cycle's wake, handoff-only (persisted until the next dusk bracket). 0 = none yet.")
         out.append("# TYPE birdnode_night_wake_timestamp_seconds gauge")
         out.append("birdnode_night_wake_timestamp_seconds %d" % int(night["wake_epoch"]))
         out.append("# HELP birdnode_night_slept_seconds Planned night-sleep duration of the current cycle (night_slept_s). 0 = none yet.")
         out.append("# TYPE birdnode_night_slept_seconds gauge")
         out.append("birdnode_night_slept_seconds %d" % int(night["slept_s"]))
+        # v1.74: next sleep-window ENTRY (dusk + postDusk) as seen on the last
+        # record. Always emitted (0 = unknown: pre-1.74 firmware, lat/lon unset,
+        # clock unsynced, or polar — staleness then falls back to legacy logic).
+        out.append("# HELP birdnode_night_window_start_timestamp_seconds Next night-sleep window entry epoch (dusk + postDusk, reported by the node on its dumps, v1.74+). 0 = unknown.")
+        out.append("# TYPE birdnode_night_window_start_timestamp_seconds gauge")
+        out.append("birdnode_night_window_start_timestamp_seconds %d" % int(night["window_start"]))
+        # v1.74: the deep-sleep chain verdict of the last dump. Label metric like
+        # birdnode_last_result: when the value flips, the old label set stops
+        # being emitted (stale after the scrape gap). Absent on pre-1.74.
+        status = night.get("status")
+        if isinstance(status, str) and status:
+            out.append("# HELP birdnode_night_status Night-sleep chain verdict of the node's most recent dump. Enum: ready, inside_window, charging, eco_off, night_sleep_off, live_active, need_latlon, need_tzrule, time_invalid... (absent pre-v1.74 = unknown).")
+            out.append("# TYPE birdnode_night_status gauge")
+            out.append("birdnode_night_status{status=\"%s\"} 1" % _label_escape(status))
         node = latest.get("node", "unknown")
         info = {'node': node if isinstance(node, str) else "unknown",
                 'fw_version': str(latest.get("fw_version", "unknown")),
@@ -593,7 +623,7 @@ def _local_epoch(date_str: str, time_str: str) -> float:
 # ---------------------------------------------------------------------------
 
 class MetricsHandler(BaseHTTPRequestHandler):
-    server_version = "birdup-exporter/1.1"
+    server_version = "birdup-exporter/1.2"
 
     def do_GET(self):
         if self.path not in ("/", "/metrics"):
