@@ -9,5 +9,7 @@
   "ntfy_url": "https://ntfy.spadaberry.net",
   "ntfy_topic": "bird-up",
   "grafana_url": "https://grafana.tail404e6.ts.net",
-  "state_dir": "/home/dylanberry/.powerbench"
+  "state_dir": "/home/dylanberry/.powerbench",
+  "min_coverage_ratio": 0.6,
+  "min_span_h": 2.0
 }

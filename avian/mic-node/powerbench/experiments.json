@@ -1,33 +1,19 @@
 {
-  "comment": "Power-efficiency experiment schedule. Phases run in order; the phase clock only accumulates while the node is discharging on battery above battery_floor_pct. 'set' keys are pushed via /api/set at phase entry; on guard trip or abort the node is reverted to the captured baseline. End of schedule = revert to baseline and idle.",
+  "comment": "Power-efficiency schedule. RULES: (1) night sleep stays ON in every phase — it is an invariant, the controller refuses a phase that sets it and pauses if the node reports it off; (2) a phase only counts if its report passes the coverage gate (measured contiguous discharge spans covering >= min_coverage_ratio of the accrued battery time), otherwise it is reported invalid and counted in powerbench_phase_discarded_total; (3) the node must be UNPLUGGED for the whole block — charging pauses the clock, so a plugged-in node simply accrues nothing (PowerbenchNoBatteryTime alerts). One cycle = one local discharge day (~13 h awake in the daytime record window, the rest asleep); each phase wants >=3 cycles, hence 36 battery-hours. A phase is judged on the median cycle slope in mV/h, with the cycle IQR as the noise band: if the ranges overlap, it is not a result yet.",
   "phases": [
     {
-      "name": "baseline",
-      "duration_h": 48,
+      "name": "reference",
+      "duration_h": 36,
       "set": {},
-      "guards": [],
-      "why": "Control: current shipping config (cpu 160, tx -1, dump 300s). Establishes the reference discharge slope."
+      "guards": ["crash"],
+      "why": "Shipping config as it stands on the node today. Establishes the cycle-to-cycle noise band (~36 battery-hours = ~3 discharge cycles) that every later phase is judged against."
     },
     {
       "name": "cpu80",
-      "duration_h": 24,
+      "duration_h": 36,
       "set": { "pwr_cpu_low": "80" },
-      "guards": ["crash"],
-      "why": "REC-phase CPU at 80 MHz (v1.54-hardened path). Abort on any interrupt_wdt reboot."
-    },
-    {
-      "name": "dump420",
-      "duration_h": 24,
-      "set": { "udp_buf_int_s": "420" },
-      "guards": ["drops"],
-      "why": "Fewer radio windows/hr. Abort if ring margin erodes (dropped_frames climbs > drop_guard_frames)."
-    },
-    {
-      "name": "txpower85",
-      "duration_h": 24,
-      "set": { "pwr_tx_dbm": "8.5" },
-      "guards": [],
-      "why": "Slower-but-cooler dump windows: compare window length x slope vs 15 dBm to find min energy per dump."
+      "guards": ["crash", "drops"],
+      "why": "REC-phase CPU at 80 MHz (v1.54-hardened path; the dump header always reads 160 because the clock is raised after association, so this is verified from controller state only). The only idle-slice knob with a plausible signal in the re-analysis."
     }
   ]
 }
