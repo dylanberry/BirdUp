@@ -12,5 +12,5 @@
   "state_dir": "/home/dylanberry/.powerbench",
   "min_coverage_ratio": 0.6,
   "min_span_h": 2.0,
-  "dashboard_url": "https://grafana.spadaberry.net"
+  "dashboard_url": "https://grafana.spadaberry.net/d/birdup-telemetry"
 }
