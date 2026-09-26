@@ -37,7 +37,7 @@ PROM = os.environ.get(
 NTFY_URL = os.environ.get("NTFY_URL", "http://ntfy.ntfy.svc.cluster.local")
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "bird-up")
 TOKEN = os.environ.get("NTFY_TOKEN", "")
-DASHBOARD = os.environ.get("DASHBOARD_URL", "https://grafana.tail404e6.ts.net")
+DASHBOARD = os.environ.get("DASHBOARD_URL", "https://grafana.spadaberry.net")
 
 REPORTS = [
     ("battery_hours", "powerbench_phase_report_battery_hours", "%.1f"),

@@ -73,6 +73,8 @@ log = logging.getLogger("powerbench")
 DEFAULT_STATE_DIR = os.path.expanduser("~/.powerbench")
 
 # Estimator tuning (see the module docstring for why this is not a plain fit).
+DEFAULT_DASHBOARD = "https://grafana.spadaberry.net"   # click target for notifications
+
 BIN_S = 900.0          # slope smoothing bin (15 min)
 SPAN_GAP_S = 900.0     # max gap between samples inside one span (3x dump interval)
 
@@ -384,6 +386,12 @@ class Controller:
         snap["prev_reboot"] = labels.get("prev_reboot", "")
         return snap
 
+    def _dashboard_url(self):
+        """Click target for ntfy notifications. NOT grafana_url: that one is
+        the in-cluster Grafana service used for the annotation API and is not
+        reachable from a phone."""
+        return self.cfg.get("dashboard_url") or DEFAULT_DASHBOARD
+
     def node_night_sleep(self):
         """The node's own night-sleep TOGGLE (not the slept bracket) straight
         from /api/status, or None when the node is in a radio-off window. Only
@@ -641,7 +649,7 @@ class Controller:
         lines.append("NEXT: python3 /app/powerbench.py skip | pause | status")
         self._notify(title, "\n".join(lines),
                      "3" if report.get("valid") else "4",
-                     click=self.cfg.get("grafana_url"))
+                     click=self._dashboard_url())
         self._annotate("phase %s %s: %s" % (name, report.get("completed_by"),
                                             verdict or "report ready"),
                        ["powerbench", name, "report"])
@@ -850,7 +858,7 @@ class Controller:
                         "POST /api/set key=night_sleep value=1), then let the clock "
                         "resume (python3 /app/powerbench.py resume)."
                         % (" (status: %s)" % code if code else ""),
-                        "4", click=self.cfg.get("grafana_url"))
+                        "4", click=self._dashboard_url())
                 elif not off and st.get("night_sleep_off"):
                     st["night_sleep_off"] = False
                     if st.get("paused_reason") == "night_sleep_off":
@@ -955,7 +963,7 @@ class Controller:
             self._notify("powerbench RESET",
                          "Schedule restarted at phase 0; previous state archived on "
                          "the PVC. Baseline kept: %s" % (old.get("baseline") or {}), "3",
-                         click=self.cfg.get("grafana_url"))
+                         click=self._dashboard_url())
             self._enter_phase(0)
 
     # --------------------------------------------------------------- metrics
