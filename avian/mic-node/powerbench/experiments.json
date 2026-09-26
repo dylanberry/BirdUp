@@ -1,18 +1,25 @@
 {
-  "comment": "Power-efficiency schedule. RULES: (1) night sleep stays ON in every phase — it is an invariant, the controller refuses a phase that sets it and pauses if the node reports it off; (2) a phase only counts if its report passes the coverage gate (measured contiguous discharge spans covering >= min_coverage_ratio of the accrued battery time), otherwise it is reported invalid and counted in powerbench_phase_discarded_total; (3) the node must be UNPLUGGED for the whole block — charging pauses the clock, so a plugged-in node simply accrues nothing (PowerbenchNoBatteryTime alerts). One cycle = one local discharge day (~13 h awake in the daytime record window, the rest asleep); each phase wants >=3 cycles, hence 36 battery-hours. A phase is judged on the median cycle slope in mV/h, with the cycle IQR as the noise band: if the ranges overlap, it is not a result yet.",
+  "comment": "Power-efficiency schedule. RULES: (1) night sleep stays ON in every phase \u2014 it is an invariant, the controller refuses a phase that sets it and pauses if the node reports it off; (2) a phase only counts if its report passes the coverage gate (measured contiguous discharge spans covering >= min_coverage_ratio of the accrued battery time), otherwise it is reported invalid and counted in powerbench_phase_discarded_total; (3) the node's USB is fed by a SOLAR panel (VBUS present only while the sun is on it, observed ~10:00-13:00), so charging pauses the clock and accrual happens in the off-sun windows (mid-afternoon to nightfall, plus shaded mornings) \u2014 a node pinned at 100% all day accrues almost nothing, which PowerbenchNodePlugged escalates. One cycle = one local discharge day (~13 h awake in the daytime record window, the rest asleep); each phase wants >=3 cycles, hence 36 battery-hours. A phase is judged on the median cycle slope in mV/h, with the cycle IQR as the noise band: if the ranges overlap, it is not a result yet.",
   "phases": [
     {
       "name": "reference",
       "duration_h": 36,
       "set": {},
-      "guards": ["crash"],
-      "why": "Shipping config as it stands on the node today. Establishes the cycle-to-cycle noise band (~36 battery-hours = ~3 discharge cycles) that every later phase is judged against."
+      "guards": [
+        "crash"
+      ],
+      "why": "Shipping config as it stands on the node today, measured over its natural solar charge/discharge cycle. Establishes the cycle-to-cycle noise band (~36 battery-hours of off-sun discharge = ~3-4 solar days) that every later phase is judged against."
     },
     {
       "name": "cpu80",
       "duration_h": 36,
-      "set": { "pwr_cpu_low": "80" },
-      "guards": ["crash", "drops"],
+      "set": {
+        "pwr_cpu_low": "80"
+      },
+      "guards": [
+        "crash",
+        "drops"
+      ],
       "why": "REC-phase CPU at 80 MHz (v1.54-hardened path; the dump header always reads 160 because the clock is raised after association, so this is verified from controller state only). The only idle-slice knob with a plausible signal in the re-analysis."
     }
   ]

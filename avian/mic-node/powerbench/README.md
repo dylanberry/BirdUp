@@ -30,11 +30,16 @@ whose `set` touches `nightSleep` / `night_sleep(_*)` is refused with an abort,
 and if the node reports `night_sleep=0` the clock pauses and the operator is
 notified once.
 
-**One cycle, not one hour.** The node sleeps through the civil night and is
-awake ~13 h/day, so each battery session is one data point and a phase wants
-≥3 of them (schedule uses 36 battery-hours). The node must be **unplugged for
-the whole block** — charging pauses the clock, so a plugged-in node accrues
-nothing. Expect ~3–4 days per phase once the node is off USB.
+**One cycle, not one hour — and the power comes from the sun.** The node's USB
+is fed by a solar panel, so VBUS is present only while the sun is on it
+(observed ~10:00–13:00, i.e. it self-charges to ~100% midday and runs on
+battery from mid-afternoon through the morning). Charging pauses the phase
+clock, so accrual happens in the off-sun windows; each off-sun session is one
+cycle and a phase wants ≥3 of them (schedule uses 36 battery-hours ≈ 3–4 solar
+days). Two consequences to keep in mind: a panel that is over-provisioned for
+this test pins the battery at ~100%, where mV/h is compressed and little
+accrues (`PowerbenchNodePlugged` escalates that), and the analyser compares
+cycles rather than assuming a fixed daily window.
 
 **Notifications are actionable by contract.** Phase reports and every alert
 lead with what happened, state whether the result beat the reference beyond the
@@ -140,4 +145,4 @@ kubectl -n birdup-go rollout restart deploy/powerbench   # if not automatic
 
 First `run` enters phase 0 (the reference phase, no config changes). The
 schedule only advances on battery-discharge time, so wall time stretches with
-charge cycles — with the node unplugged expect ~3–4 days per phase.
+charge cycles — on solar expect ~3–4 days per phase.

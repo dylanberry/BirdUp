@@ -34,7 +34,7 @@ Exposes Prometheus metrics on :9559/metrics:
   powerbench_phase_coverage_ratio         (measured spans / accrued battery time)
   powerbench_phase_cycles                 (cycles seen this phase)
   powerbench_paused{reason} 0/1           (charging|low_batt|manual|no_telemetry|
-                                           night_sleep_off|awaiting_unplug)
+                                           night_sleep_off)
   powerbench_halted 0/1
   powerbench_guard_tripped_total{guard}
   powerbench_apply_failures_total
@@ -616,8 +616,10 @@ class Controller:
                              100.0 * float(self.cfg.get("min_coverage_ratio", 0.6))))
             lines.append("cycles seen: %s | span-hours: %s" % (
                 report.get("cycle_count", "n/a"), report.get("span_hours", "n/a")))
-            lines.append("DO: leave the node unplugged for the whole block — only "
-                         "discharge time on battery counts, and USB/charging pauses it.")
+            lines.append("DO: check the off-sun window — only discharge time counts, "
+                         "and VBUS (solar) pauses the clock. If the battery sits at "
+                         "~100% all day the panel is over-provisioned for this test; "
+                         "otherwise just let the phase run longer.")
             verdict = "invalid"
             title = "powerbench: %s measured NOTHING (node on USB?)" % name
         else:
