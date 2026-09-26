@@ -152,7 +152,10 @@ def main():
     body.append(action)
     body.append("charts: %s" % DASHBOARD)
 
-    # Actionability gate.
+    # Actionability gate. Deliberately NOT gated on charging/low_batt: those
+    # are steady states already covered by their own actionable rules
+    # (PowerbenchNodePlugged / PowerbenchFloorReached), and repeating them in a
+    # daily digest would just be noise.
     completed_24h = value("increase(powerbench_phase_completed_total[24h])") or 0.0
     discarded_24h = value("increase(powerbench_phase_discarded_total[24h])") or 0.0
     why = None
@@ -162,11 +165,6 @@ def main():
         why = "a phase was discarded by the coverage gate"
     elif night_off:
         why = "night sleep is OFF on the node (clock paused)"
-    elif paused_reason in ("low_batt",):
-        why = "the node reached the battery floor"
-    elif paused_reason == "charging" and (value(
-            "powerbench_paused{reason=\"charging\"}") or 0) == 1:
-        why = "the node is on USB (clock paused)"
 
     print("\n".join(body))
     if not (force or why):
