@@ -73,7 +73,11 @@ log = logging.getLogger("powerbench")
 DEFAULT_STATE_DIR = os.path.expanduser("~/.powerbench")
 
 # Estimator tuning (see the module docstring for why this is not a plain fit).
-DEFAULT_DASHBOARD = "https://grafana.spadaberry.net"   # click target for notifications
+# Notification link target: the Bird Up! Telemetry dashboard (uid
+# birdup-telemetry), never the Grafana home page. Panels are addressed with
+# Grafana's viewPanel= so a notification opens the exact chart:
+#   50 phase progress | 56 discharge slope | 59 night sleep | 53 guard trips
+DEFAULT_DASHBOARD = "https://grafana.spadaberry.net/d/birdup-telemetry"
 
 BIN_S = 900.0          # slope smoothing bin (15 min)
 SPAN_GAP_S = 900.0     # max gap between samples inside one span (3x dump interval)
@@ -386,11 +390,17 @@ class Controller:
         snap["prev_reboot"] = labels.get("prev_reboot", "")
         return snap
 
-    def _dashboard_url(self):
-        """Click target for ntfy notifications. NOT grafana_url: that one is
-        the in-cluster Grafana service used for the annotation API and is not
-        reachable from a phone."""
-        return self.cfg.get("dashboard_url") or DEFAULT_DASHBOARD
+    def _dashboard_url(self, panel=None, days=14):
+        """Click target for ntfy notifications: the Bird Up! Telemetry
+        dashboard, focused on `panel` when given (Grafana viewPanel), so the
+        notification opens the exact chart instead of the Grafana home page.
+        NOT grafana_url -- that is the in-cluster Grafana service used for the
+        annotation API and is not reachable from a phone."""
+        base = self.cfg.get("dashboard_url") or DEFAULT_DASHBOARD
+        if not panel:
+            return base
+        return "%s%sviewPanel=%d&from=now-%dd&to=now" % (
+            base, "&" if "?" in base else "?", panel, days)
 
     def node_night_sleep(self):
         """The node's own night-sleep TOGGLE (not the slept bracket) straight
@@ -649,7 +659,7 @@ class Controller:
         lines.append("NEXT: python3 /app/powerbench.py skip | pause | status")
         self._notify(title, "\n".join(lines),
                      "3" if report.get("valid") else "4",
-                     click=self._dashboard_url())
+                     click=self._dashboard_url(panel=56))   # discharge slope
         self._annotate("phase %s %s: %s" % (name, report.get("completed_by"),
                                             verdict or "report ready"),
                        ["powerbench", name, "report"])
@@ -858,7 +868,7 @@ class Controller:
                         "POST /api/set key=night_sleep value=1), then let the clock "
                         "resume (python3 /app/powerbench.py resume)."
                         % (" (status: %s)" % code if code else ""),
-                        "4", click=self._dashboard_url())
+                        "4", click=self._dashboard_url(panel=59))   # night sleep
                 elif not off and st.get("night_sleep_off"):
                     st["night_sleep_off"] = False
                     if st.get("paused_reason") == "night_sleep_off":
@@ -963,7 +973,7 @@ class Controller:
             self._notify("powerbench RESET",
                          "Schedule restarted at phase 0; previous state archived on "
                          "the PVC. Baseline kept: %s" % (old.get("baseline") or {}), "3",
-                         click=self._dashboard_url())
+                         click=self._dashboard_url(panel=50))   # phase progress
             self._enter_phase(0)
 
     # --------------------------------------------------------------- metrics

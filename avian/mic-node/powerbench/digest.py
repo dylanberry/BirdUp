@@ -37,7 +37,10 @@ PROM = os.environ.get(
 NTFY_URL = os.environ.get("NTFY_URL", "http://ntfy.ntfy.svc.cluster.local")
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "bird-up")
 TOKEN = os.environ.get("NTFY_TOKEN", "")
-DASHBOARD = os.environ.get("DASHBOARD_URL", "https://grafana.spadaberry.net")
+# Specific dashboard + panel (Grafana viewPanel), never the home page.
+DASHBOARD = os.environ.get("DASHBOARD_URL",
+                          "https://grafana.spadaberry.net/d/birdup-telemetry")
+PANEL_SLOPE = 56
 
 REPORTS = [
     ("battery_hours", "powerbench_phase_report_battery_hours", "%.1f"),
@@ -150,7 +153,9 @@ def main():
     line, action = verdict(rows)
     body.append(line)
     body.append(action)
-    body.append("charts: %s" % DASHBOARD)
+    click = ("%s%sviewPanel=%d&from=now-14d&to=now"
+             % (DASHBOARD, "&" if "?" in DASHBOARD else "?", PANEL_SLOPE))
+    body.append("charts: %s" % click)
 
     # Actionability gate. Deliberately NOT gated on charging/low_batt: those
     # are steady states already covered by their own actionable rules
@@ -180,7 +185,7 @@ def main():
         headers={"Authorization": "Bearer " + TOKEN,
                  "Title": "powerbench digest: %s" % (line.split(" — ")[0][:80]),
                  "Priority": "3",
-                 "Click": DASHBOARD,
+                 "Click": click,
                  "Tags": "bird,chart_with_downwards_trend"})
     with urllib.request.urlopen(req, timeout=15) as resp:
         print("ntfy post: HTTP %d" % resp.status)
