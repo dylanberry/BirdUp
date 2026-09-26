@@ -254,6 +254,7 @@ class Controller:
         self.cfg = cfg
         self.phases = experiments["phases"]
         self.state_dir = state_dir
+        os.makedirs(state_dir, exist_ok=True)
         self.state_path = os.path.join(state_dir, "state.json")
         self.control_path = os.path.join(state_dir, "control.json")
         self.lock = threading.Lock()
@@ -977,7 +978,8 @@ class Controller:
           1 if st.get("night_sleep_off") else 0)
         g("powerbench_phase_elapsed_wall_seconds",
           "Wall-clock time since the current phase began (battery time is run_seconds).",
-          round(now - st["phase_start_epoch"], 1) if st.get("phase_start_epoch") else None)
+          round(time.time() - st["phase_start_epoch"], 1)
+          if st.get("phase_start_epoch") else None)
         out.append("# HELP powerbench_phase_completed_total Phases that reached their battery-hour budget.")
         out.append("# TYPE powerbench_phase_completed_total counter")
         out.append("# HELP powerbench_phase_valid_total Phase reports that passed the coverage gate.")
