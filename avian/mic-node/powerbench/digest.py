@@ -110,8 +110,9 @@ def verdict(rows):
     cand = [ph for ph in rows
             if ph not in ("reference", "baseline") and rows[ph].get("valid")]
     if not ref or not cand:
-        return "reference block only so far — no verdict yet", \
-            "DO: let the reference block finish (~3 cycles), then the next phase runs itself."
+        return ("reference block only so far — no verdict yet",
+                "DO: let the reference block finish (~3 off-sun cycles, 3-4 solar days), "
+                "then the next phase runs itself.")
     ph = sorted(cand)[-1]
     r = rows[ph]
     a, b = r.get("slope_mv"), ref.get("slope_mv")
@@ -121,7 +122,9 @@ def verdict(rows):
     if abs(delta) < 8.0:
         return ("%s: %.1f mV/h vs reference %.1f mV/h — %+.0f%% (within the noise band)"
                 % (ph, a, b, delta),
-                "DO: no decision yet — this knob does not change drain enough to act on.")
+                "DO: no decision yet — either this knob does not change drain enough to act on, "
+                "or the reference and candidate SOC windows differ (check coverage/cycles "
+                "per phase).")
     if delta < 0:
         return ("%s: %.1f mV/h vs reference %.1f mV/h — %.0f%% BETTER"
                 % (ph, a, b, abs(delta)),
