@@ -49,7 +49,9 @@ Exposes Prometheus metrics on :9559/metrics:
 Modes:
   powerbench.py run      — daemon (systemd)
   powerbench.py status   — print state
-  powerbench.py pause|resume|abort|skip — control the running daemon
+  powerbench.py pause|resume|abort|skip|reset — control the running daemon
+                           (reset restarts the current schedule at phase 0,
+                            archiving the previous state on the PVC)
 Stdlib only, mirroring node-telemetry-exporter.py conventions.
 """
 
@@ -936,6 +938,25 @@ class Controller:
         elif name == "skip":
             if self.phase is not None:
                 self._enter_phase(self.state["phase_index"] + 1)
+        elif name == "reset":
+            # Start the current schedule from phase 0 with fresh accounting. The
+            # running process owns state.json, so this is the only safe way to
+            # clear it (deleting the file races the next tick's save).
+            log.warning("RESET: state cleared, restarting the schedule at phase 0")
+            archived = os.path.join(self.state_dir,
+                                    "state.pre-reset-%d.json" % int(time.time()))
+            try:
+                _save_json(archived, self.state)
+            except OSError as exc:
+                log.warning("could not archive state before reset: %s", exc)
+            old = dict(self.state)
+            self.state = self._fresh_state()
+            self.state["baseline"] = old.get("baseline", {})
+            self._notify("powerbench RESET",
+                         "Schedule restarted at phase 0; previous state archived on "
+                         "the PVC. Baseline kept: %s" % (old.get("baseline") or {}), "3",
+                         click=self.cfg.get("grafana_url"))
+            self._enter_phase(0)
 
     # --------------------------------------------------------------- metrics
 
@@ -1090,7 +1111,8 @@ def _write_control(state_dir, command):
 
 
 def main(argv):
-    if len(argv) < 2 or argv[1] not in ("run", "status", "pause", "resume", "abort", "skip"):
+    if len(argv) < 2 or argv[1] not in ("run", "status", "pause", "resume", "abort",
+                                       "skip", "reset"):
         print(__doc__)
         return 2
     mode = argv[1]
@@ -1101,7 +1123,7 @@ def main(argv):
     state_dir = cfg.get("state_dir", DEFAULT_STATE_DIR)
     os.makedirs(state_dir, exist_ok=True)
 
-    if mode in ("pause", "resume", "abort", "skip"):
+    if mode in ("pause", "resume", "abort", "skip", "reset"):
         return _write_control(state_dir, mode)
     if mode == "status":
         st = _load_json(os.path.join(state_dir, "state.json"), default={})
