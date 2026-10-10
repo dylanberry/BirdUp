@@ -14,7 +14,9 @@ detail belongs in the linked docs, not here.
   don't edit upstream files unless the change is meant to be a patch
   (see `docs/deployment/analysis.py.patch` for the pattern).
 
-## Read first (follow the links; don't duplicate them here)
+## Documentation map
+
+Follow the links; don't duplicate them here.
 
 | Doc | Covers |
 |---|---|
@@ -22,8 +24,13 @@ detail belongs in the linked docs, not here.
 | [docs/deployment/README.md](docs/deployment/README.md) | Caddy/BirdNET-Pi config, PHP-FPM permissions, deploy script, OTA server requirements |
 | [avian/scripts/README.md](avian/scripts/README.md) | Illustration pipeline (pregen → cutout → masks), sex variants, per-species tuning |
 | [frame/README.md](frame/README.md) | Optional e-ink wall display |
-| `../tsim7080g-node/CONTEXT.md` | The ESP32 mic-node firmware (the audio source) — sibling repo `~/code/tsim7080g-node` |
+| `../tsim7080g-node/AGENTS.md` | The ESP32 mic-node firmware (the audio source) — sibling repo `~/code/tsim7080g-node` |
 | `CONTEXT.local.md` | Gitignored local-only ops notes (Pi sudo state, workarounds). **Never commit.** |
+| [docs/architecture.md](docs/architecture.md) | Audio path, live listening, node OTA, auth layering |
+| [docs/landmines.md](docs/landmines.md) | Hard-won lessons: venv/deps, cutout toolchain, thresholds |
+| [docs/status.md](docs/status.md) | Open work on the live deployment |
+
+## Essentials
 
 ## Live environment
 
@@ -39,7 +46,10 @@ detail belongs in the linked docs, not here.
 key, OTA upload token). Never commit tokens, passwords, or hashes beyond the
 `Caddyfile.sample` placeholder.
 
-## Conventions (do not break)
+## Imperatives
+
+### Conventions (do not break)
+
 
 - **Cache busting:** any `avian/frontend/apt.js` edit → bump `apt.js?v=rNN` in
   `avian/frontend/index.html`. Illustration/mask changes → also bump
@@ -61,52 +71,17 @@ key, OTA upload token). Never commit tokens, passwords, or hashes beyond the
   (`CONFIDENCE=0.5`, `SENSITIVITY=1.35`, `AUDIO_GAIN=3.0`, `DATA_MODEL_VERSION=2`).
   `AUDIO_GAIN` only works because of the `analysis.py` patch.
 
-## Architecture in brief
+### Dependency and pipeline constraints
 
-- **Audio in (active path):** the mic node buffers ~10 min of 24 kHz IMA-ADPCM
-  in PSRAM and TCP-dumps to the Pi on `:8557` every 5 min; `birdnet-dumpd`
-  (systemd unit) decodes to 15 s StreamData WAVs named by **capture time**, so
-  `birdnet_analysis` and detection timestamps need no changes. RTSP pull and
-  UDP burst push remain installed but idle as fallbacks. Receivers + install
-  notes: `avian/mic-node/`. Details: node repo.
-- **Live listening:** drawer player → `avian/api/live-audio.php?action=start|end`
-  → node's `/api/live` switches burst ↔ continuous; `scripts/livestream.sh`
-  takes raw PCM from `UDP_LIVESTREAM_PORT` (default 8556) → icecast `/stream`.
-  Node address: `avian/config/mic-node.json`.
-- **Node firmware OTA:** admin drawer → `avian/api/ota-server.php`; artifacts in
-  `~/BirdNET-Pi/avian/ota/` (caddy-writable, created by the deploy script).
-  Scripted publishes use a Bearer deploy token (sha256 stored at
-  `avian/ota/upload-token`; raw token shown once). See docs/deployment/README.md.
-- **Auth:** collage is public; admin endpoints use the `birdup_admin` session
-  cookie (30 days; verify against `AV_AUTH_HASH`), reverse-proxied tools
-  (`/log*`, `/stats*`, `/terminal*`) fall back to Caddy `basic_auth`.
-
-## Hard-won lessons
-
-- The birdnet venv must include **resampy**: dumpd writes 24 kHz WAVs and
-  `analysis.py` resamples with `res_type='kaiser_fast'` (resampy-only in
-  librosa). Without it every analysis fails and the StreamData backlog
-  crash-loops the service, flooding the journal (2026-08-17: 4k-file backlog,
-  journal vacuumed). Also: **rembg is pinned ≤2.0.68** — 2.0.70+ requires
-  pillow≥12.1, which violates streamlit's `pillow<12` constraint.
-- A Gemini API **429 can mean billing/credits exhausted**, not rate limiting.
-- Cutouts: **BiRefNet locally, u2netp only on the Pi** — u2netp over-removes
-  pale plumage (belly/vent holes).
-- Style-reference prints can reinforce wrong-genus drift (a swift collapsed to a
-  swallow because the style print had swallows); `ANTI_REF_TRIGGERS` in
-  `pregen.py` is the fix mechanism.
-- "Missed" detections are usually **threshold-filtered, not pipeline failures** —
-  chunk scores just under `CONFIDENCE` are silently dropped.
-- Pi sudo for `dylanberry` is **not** passwordless; the service-restart
-  workaround is in `CONTEXT.local.md`.
-
-## Open work
-
-1. Generate the remaining ~120 Ontario species illustrations (priority list:
-   `avian/scripts/ontario_toronto_labels.txt`; pipeline: avian/scripts/README.md).
-2. Rotate credentials previously exposed in chat: Caddy `basic_auth` password,
-   BirdWeather token.
-3. Solar install (AGM chosen over LiFePO4 — LiFePO4 can't charge below 0 °C).
-4. Optional: Perch v2 classifier trial (download model + labels to the Pi first;
-   plan a fallback before switching `MODEL`).
-5. Field-validate detection levels on the mic-node audio path (A/B vs old USB lav).
+- **`resampy` must be in the birdnet venv.** `dumpd` writes 24 kHz WAVs and `analysis.py`
+  resamples with `res_type='kaiser_fast'` (resampy-only in librosa). Without it every analysis
+  fails and the StreamData backlog crash-loops the service.
+- **`rembg` is pinned ≤2.0.68.** 2.0.70+ requires `pillow≥12.1`, which violates streamlit's
+  `pillow<12` constraint.
+- **Cutouts: BiRefNet locally, `u2netp` only on the Pi.** u2netp over-removes pale plumage
+  (belly/vent holes).
+- **A Gemini API 429 can mean billing/credits exhausted**, not rate limiting.
+- **"Missed" detections are usually threshold-filtered, not pipeline failures** — chunk scores
+  just under `CONFIDENCE` are silently dropped.
+- **Pi `sudo` for `dylanberry` is not passwordless** — the service-restart workaround lives in
+  `CONTEXT.local.md`.
